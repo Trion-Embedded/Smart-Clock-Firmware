@@ -1,3 +1,12 @@
+# Node JS
+node_modules/*
+package-lock.json
+
+# Platform IO
+.pio/*
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+
 # Prerequisites
 *.d
 
