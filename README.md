@@ -2,6 +2,15 @@
 
 ESP32 based clock which includes clock, alarm, timer and task manager.
 
+## Features
+
+- [ ] Clock and Date
+- [ ] Focus Timer
+- [ ] Pomodoro Timer
+- [ ] Alarm
+- [ ] Reminder
+- [ ] Task Manager
+
 ## Contribution Guide
 
 Thank you for your interest in contributing to Smart Clock! We welcome all contributions, big or small. You can help by filing issues, adding documentation, fixing bugs, or implementing features. We appreciate your support!
