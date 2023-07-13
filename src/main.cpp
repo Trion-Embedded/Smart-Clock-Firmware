@@ -4,12 +4,14 @@
 #include <Arduino.h>
 // Library for rtc_clock.
 #include <ESP32Time.h>
+#include <stdio.h>
 
 // Define buttons.
 #define INCREMENT 33
 #define BUTTON_STATE 32
 
 /* -------------------------- */
+
 /* Definitions for menu function. */
 
 // Display which mode before choose
@@ -20,20 +22,21 @@ int mode = 0;
 
 // State of mode.
 bool mode_state = false;
-/* -------------------------- */
 
 /* -------------------------- */
+
 /* Definitons for clock funtion. */
 
 // Value of minute.
 int minute = 0;
-/* -------------------------- */
 
 /* -------------------------- */
+
 /* Definitons for pomodoro funtion. */
 
 // Value of second.
 int second = 60;
+
 /* -------------------------- */
 
 // Offset in seconds GMT. (For rtc_clock funtion)
@@ -544,7 +547,7 @@ void Task_RTC_Code(void *pvParameters)
   delay(20);
 }
 
-// Task for pomodoro funtion. (Mode 3)
+// Task for pomodoro function. (Mode 3)
 void Task_Pomodoro_Code(void *pvParameters)
 {
   // task watchdog got triggered. the following tasks did not reset the watchdog in time ??
@@ -678,10 +681,10 @@ void Task_Pomodoro_Code(void *pvParameters)
   delay(20);
 }
 
-// Task for send_text funtion. (Mode 4)
-void Task_Text_Code(void *pvParameters) // It will be developed.
+// Task for send_text function. (Mode 4) // Using keyboard input.
+void Task_Text_Code2(void *pvParameters) // It will be developed.
 {
-  char input_message[20];
+  char input_message[50];
   bool state = false;
   char incoming;
 
@@ -691,38 +694,56 @@ void Task_Text_Code(void *pvParameters) // It will be developed.
   {
     if (mode == 4)
     {
-      for (int i = 0; i < 20; i++)
-      {
-        input_message[i] = '\0';
-        delay(10);
-      }
-
       state = false;
 
       // Input from user and works one time.
       while (Serial.available() > 0 && state == false)
       {
-        for (int i = 0; i < 20;)
+
+        /* *********************** */
+        // Read character.
+        for (int i = 0;;) // Read 50 character -> ; i<50 ;.
         {
-          // Read input and assign to variable.
+          // Assign input to variable
           incoming = Serial.read();
 
-          if ((incoming >= 97 && incoming <= 122 && incoming != '\0') || (incoming >= 48 && incoming <= 58 && incoming != '\0')) // 97 122
+          // Assign only small letters and numbers to array.
+          if (((incoming >= 97 && incoming <= 122) || (incoming >= 48 && incoming <= 58) || incoming == ' ') && (incoming != '\0'))
           {
-            // Assign input value to array.
+            // Assign variable to array.
             input_message[i] = incoming;
 
-            Serial.print(input_message[i]);
-            i++;
+            if (i <= 49)
+            {
+              // Print array.
+              Serial.print(input_message[i]);
+              i++;
+            }
+
             delay(10);
           }
 
-          // if click enter, input ends.
-          if (incoming == 10)
+          // When input backspace
+          else if (incoming == '\b')
           {
-            break;
+            i--;
+
+            if (i < 0)
+            {
+              i = 0;
+            }
+
+            // Assign backspace to array.
+            input_message[i] = incoming;
+
+            // Print backspace.
+            Serial.print(input_message[i]);
+
+            delay(10);
           }
         }
+        delay(10);
+
         state = true;
 
         // to mode 0.
@@ -756,10 +777,137 @@ void Task_Text_Code(void *pvParameters) // It will be developed.
 
     if (pre_mode != 4)
     {
-
       display_state = false;
     }
 
+    delay(20);
+  }
+}
+
+// Task for send_text function. (Mode 4) // Using button for letters.
+void Task_Text_Code(void *pvParameters)
+{
+  // Input from user.
+  char input_message[20];
+
+  // Variable to print text.
+  bool state = false;
+
+  // Digit of array.
+  int digit = 0;
+
+  // Letters type of int. (65-90)
+  int value = 65;
+
+  // int to char.
+  char buffer[1];
+
+  while (1)
+  {
+    if (mode == 4)
+    {
+      // Letter digit.
+      digit = 0;
+
+      // Clear all array.
+      for (int i = 0; i < 20; i++)
+      {
+        input_message[i] = '\0';
+        delay(1);
+      }
+
+      // Function starts with A letter.
+      Serial.print('A');
+
+      while (1)
+      {
+        // Every push change the letter.
+        if (digitalRead(INCREMENT) == HIGH)
+        {
+          while (digitalRead(INCREMENT) == HIGH)
+            ;
+
+          value++;
+
+          if (value == 91)
+          {
+            value = 64;
+          }
+
+          // Backspace
+          Serial.print('\b');
+
+          // Convert int to char.
+          sprintf(buffer, "%c", value);
+
+          Serial.print(buffer);
+
+          delay(10);
+        }
+
+        if (digitalRead(BUTTON_STATE) == HIGH)
+        {
+          while (digitalRead(BUTTON_STATE) == HIGH)
+            ;
+          if (digit <= 19)
+          {
+            // Print array.
+            input_message[digit] = value;
+
+            if (input_message[digit] == 64)
+            {
+              // To next time read null.
+              input_message[digit] == 'A';
+              break;
+            }
+
+            // It is new digit starts.
+            Serial.print('A');
+            digit++;
+
+            value = 65;
+          }
+          delay(10);
+        }
+      }
+      delay(10);
+
+      Serial.print("\n");
+
+      // to mode 0.
+      mode = 0;
+
+      // end of the config of time, activete mode selection again.
+      mode_state = false;
+
+      state = true;
+
+      delay(10);
+    }
+    delay(20);
+
+    if (pre_mode == 4 && state == true)
+    {
+      for (int i = 0; i < 20; i++)
+      {
+        // HOWWWW????
+        if (input_message[i] == 64)
+        {
+          break;
+        }
+        Serial.print(input_message[i]);
+        delay(10);
+      }
+      Serial.print("\n");
+
+      state = false;
+      delay(20);
+    }
+
+    if (pre_mode != 4)
+    {
+      state = true;
+    }
     delay(20);
   }
 }
