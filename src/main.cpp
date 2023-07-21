@@ -1,43 +1,73 @@
-/* Differences -> It will change the increasing time value with a button instead of entering from the keyboard.  */
-
-// Include libraries.
 #include <Arduino.h>
-// Library for rtc_clock.
+#include <LiquidCrystal.h>
 #include <ESP32Time.h>
-#include <stdio.h>
+#include <button.h>
 
-// Define buttons.
-#define INCREMENT 33
-#define BUTTON_STATE 32
+// Pin Number
+#define ENCODER_CLK 34
+#define ENCODER_DT 35
+#define ENCODER_BTN 32
+#define LED 13
+#define LED2 18
 
-/* -------------------------- */
+#define ENCODER_CHANGE_CONST 7
+#define MAX_MODE 5
+#define MIN_MODE 0
+#define ENCODER_COUNTER_MAX_LIM (MAX_MODE * ENCODER_CHANGE_CONST)
+#define ENCODER_COUNTER_MIN_LIM (MIN_MODE * ENCODER_CHANGE_CONST)
 
-/* Definitions for menu function. */
+// LCD PINOuts
+LiquidCrystal lcd(12, 16, 15, 19, 5, 4);
 
+typedef struct
+{
+  uint8_t dt_pin;
+  uint8_t clk_pin;
+  int pulse_pos; // Private
+  int8_t mode;
+} encoder_t;
+
+void clicked();
+void double_clicked();
+void long_pressed();
+
+button_t button = {
+    .click_fun = &clicked,
+    .double_click_fun = &double_clicked,
+    .long_press_fun = &long_pressed};
+
+void IRAM_ATTR button_isr()
+{
+  button_update(&button);
+}
+encoder_t encoder;
 // Display which mode before choose
-int pre_mode = 0;
+int pre_mode = 1;
 
 // Choose which function that you want
 int mode = 0;
+int currentMode = 0;
+int lastStep = 0;
+
+// MODE state ref
+int lastMode = 0;
 
 // State of mode.
 bool mode_state = false;
+bool presscheck = false;
+bool dblpresscheck = false;
+bool sc = false;
+bool click = false;
+bool dblsc = false;
 
-/* -------------------------- */
-
-/* Definitons for clock funtion. */
-
-// Value of minute.
+//  Value of minute.
 int minute = 0;
-
-/* -------------------------- */
-
-/* Definitons for pomodoro funtion. */
-
 // Value of second.
 int second = 60;
 
-/* -------------------------- */
+// Mode Selection
+String dir = "";
+unsigned long last_run = 0;
 
 // Offset in seconds GMT. (For rtc_clock funtion)
 ESP32Time rtc(0);
@@ -48,282 +78,118 @@ hw_timer_t *My_timer = NULL;
 // Timer for pomodoro function.
 hw_timer_t *My_timer2 = NULL;
 
-// Interrupt for clock function.
-void IRAM_ATTR onTimer()
+/*     encoder updating function          */
+void encoder_update(encoder_t *e)
 {
-  // Increase minute variable every minute.
-  minute++;
+  // Read encoder inputs
+  int clkValue = digitalRead(e->clk_pin);
+  int dtValue = digitalRead(e->dt_pin);
+
+  // If data and clock values are equal then encoder turns CCW, else CW
+  if (dtValue == clkValue)
+  {
+    // Check for limits
+    if (e->pulse_pos < ENCODER_COUNTER_MAX_LIM)
+      e->pulse_pos++;
+  }
+  else
+  {
+    // Check for limits
+    if (e->pulse_pos > ENCODER_COUNTER_MIN_LIM)
+      e->pulse_pos--;
+  }
+
+  // Update mode counter with given change constant
+  e->mode = e->pulse_pos / ENCODER_CHANGE_CONST;
 }
 
-// Interrupt for pomodor function.
+//--------- Interuption -------------//
+
+// Interupt for pomodor function.
 void IRAM_ATTR onTimer2()
 {
   // Increase second variable every second.
   second--;
 }
 
+void IRAM_ATTR ISR()
+{
+  encoder_update(&encoder);
+}
+/*-----------------Task Function-----------------------*/
 // Task for menu function.
-TaskHandle_t Task_Menu;
+// TaskHandle_t Task_Menu;
 
-// Task for clock function. (Mode 1)
-TaskHandle_t Task_Clock;
-
-// Task for rtc_clock function. (Mode 2)
+// Task for rtc_clock function. (Mode 1)
 TaskHandle_t Task_RTC;
 
-// Task for pomodoro function. (Mode 3)
+// Task for pomodoro function. (Mode 2)
 TaskHandle_t Task_Pomodoro;
 
-// Task for send_text function. (Mode 4)
+// Task for send_text function. (Mode 3)
 TaskHandle_t Task_Text;
 
-// Task for menu funtion.
-void Task_Menu_Code(void *pvParameters)
+// mode selection function
+void modeSel()
 {
-  while (1)
+  char str[30];
+
+  // lcd.setCursor(0, 0);
+  // lcd.print("                ");
+
+  lcd.setCursor(0, 0);
+  lcd.print(encoder.pulse_pos);
+
+  sprintf(str, "Mode %d     ", encoder.mode);
+  lcd.setCursor(6, 1);
+  lcd.print(str);
+}
+
+// Task for menu funtion.
+void Task_Menu()
+{
+  //  if mode_state false this funtion will work.
+
+  while (mode_state == false)
   {
-    // if mode_state false this funtion will work.
-    while (mode_state == false)
+    // When INCREMENT button is on function works.
+    lcd.setCursor(0, 0);
+    lcd.print("pre_mode: ");
+    lcd.print(pre_mode);
+    if (encoder.mode != lastMode)
     {
-      // When INCREMENT button is on function works.
-      if (digitalRead(INCREMENT) == HIGH)
+      pre_mode++;
+
+      // when pre_mode pass 3, turn to 1. Because there are 3 modes.
+      if (pre_mode == 4)
       {
-        // Waits that until hand off the INCREMENT button.
-        while (digitalRead(INCREMENT) == HIGH)
-          ;
-
-        pre_mode++;
-
-        // when pre_mode pass 4, turn to 1. Because there are 4 mods.
-        if (pre_mode == 5)
-        {
-          pre_mode = 1;
-        }
-
-        Serial.print("pre_mode: ");
-        Serial.println(pre_mode);
-
-        delay(20);
+        pre_mode = 1;
       }
 
-      // When BUTTON_STATE is on function works.
-      if (digitalRead(BUTTON_STATE) == HIGH)
-      {
-        // Waits that until hand off the BUTTON_STATE button.
-        while (digitalRead(BUTTON_STATE) == HIGH)
-          ;
+      delay(20);
+      lastMode = encoder.mode;
+    }
+    if (click == true)
+    {
+      // Assign pre_mode to mode to get in that mode.
+      mode = pre_mode;
+      currentMode = 1;
+      lcd.setCursor(0, 1);
+      lcd.print("mode: ");
+      Serial.print("mode: ");
+      lcd.print(mode);
 
-        // Assign pre_mode to mode to get in that mode.
-        mode = pre_mode;
-
-        Serial.println("-----------------");
-        Serial.print("mode: ");
-        Serial.println(mode);
-        Serial.println("-----------------");
-
-        // State is true because dont works again this function.
-        mode_state = true;
-
-        delay(20);
-      }
+      // State is true because dont works again this function.
+      mode_state = true;
       delay(20);
     }
+
     delay(20);
   }
+  delay(20);
 }
 
-// Task for clock function. (Mode 1)
-void Task_Clock_Code(void *pvParameters)
-{
-  // Create a place to hold incoming messages.
-  int incoming;
-
-  // Value of last_minute.
-  int last_minute = 0;
-
-  // Value of hour.
-  int hour = 0;
-
-  // Input time from user.
-  int input_time[4];
-
-  // For one time config
-  bool get_time_state = false;
-  bool send_time_state = false;
-
-  // it is value of the time that each digit.
-  int value = 0;
-
-  // Digit value.
-  int i = 0;
-
-  while (1)
-  {
-    if (mode == 1)
-    {
-      // when mode equals 1 that activate set time functons.
-      get_time_state = false;
-      send_time_state = false;
-
-      // Assign digit value to 0, to every start on funtion .
-      i = 0;
-
-      while (get_time_state == false)
-      {
-        // Display time before config with 0s.
-        Serial.print("0");
-        Serial.print("0");
-        Serial.print(":");
-        Serial.print("0");
-        Serial.print("0");
-
-        // Backspace to first value of time.
-        Serial.print('\b');
-        Serial.print('\b');
-        Serial.print('\b');
-        Serial.print('\b');
-        Serial.print('\b');
-
-        while (i < 4)
-        {
-          // Increment button is High.
-          if (digitalRead(INCREMENT) == HIGH)
-          {
-            // Wait for push back from button.
-            while (digitalRead(INCREMENT) == HIGH)
-              ;
-            delay(20);
-
-            // Increase time value for each digit.
-            value++;
-
-            // max value of time digit is 9.
-            if (value == 10)
-            {
-              value = 0;
-            }
-
-            // First digit of time max may be 2.
-            if (i == 0 && value == 3)
-            {
-              value = 0;
-            }
-            // Second digit of time max may be 4 if digit one is 2.
-            else if (i == 1 && input_time[0] == 2 && value == 4)
-            {
-              value = 0;
-            }
-            // Third digit of time max may be 5.
-            else if (i == 2 && value == 6)
-            {
-              value = 0;
-            }
-
-            Serial.print(value);
-
-            // backspace.
-            Serial.print('\b');
-          }
-
-          delay(20);
-
-          // Confirm the time value.
-          if (digitalRead(BUTTON_STATE) == HIGH)
-          {
-            // Wait for push back from button.
-            while (digitalRead(BUTTON_STATE) == HIGH)
-              ;
-            // Assign time value to array.
-            input_time[i] = value;
-            i++;
-
-            Serial.print(value);
-
-            // Its for looks good.
-            if (i == 2)
-            {
-              Serial.print(":");
-            }
-            value = 0;
-          }
-
-          delay(20);
-        }
-        Serial.println("\n-----------------");
-
-        delay(100);
-
-        // State is true because dont works again this function.
-        get_time_state = true;
-
-        // End of while.
-        break;
-      }
-
-      while (send_time_state == false)
-      {
-        // Assign time values to variables.
-        hour = input_time[0] * 10 + input_time[1];
-        minute = input_time[2] * 10 + input_time[3];
-
-        // State is true because dont works again this function.
-        send_time_state = true;
-
-        delay(10);
-      }
-
-      // to mode 0.
-      mode = 0;
-
-      // end of the config of time, activete mode selection again.
-      mode_state = false;
-    }
-
-    // Works after every one second.
-    if (last_minute != minute)
-    {
-      // End of the 60 minutes, minute turns to 0.
-      if (minute == 60)
-      {
-        minute = 0;
-
-        // Increase one hour.
-        hour += 1;
-
-        // End of the 24 hours, hour turns to 0.
-        if (hour == 24)
-        {
-          hour = 0;
-        }
-      }
-
-      last_minute = minute;
-
-      // if works when premode is 1
-      if (pre_mode == 1 && send_time_state == true)
-      {
-        // if hour smaller than 10, print a 0.
-        if (hour < 10)
-        {
-          Serial.print('0');
-        }
-        Serial.print(hour);
-
-        Serial.print(":");
-
-        // if minute smaller than 10, print a 0.
-        if (minute < 10)
-        {
-          Serial.print('0');
-        }
-        Serial.println(last_minute);
-      }
-    }
-    delay(20);
-  }
-}
-
-// Task for rtc_clock function. (Mode 2)
+// Task for rtc_clock function. (Mode 1)
 void Task_RTC_Code(void *pvParameters)
 {
   // Create a place to hold incoming messages.
@@ -336,7 +202,7 @@ void Task_RTC_Code(void *pvParameters)
   int sec, minute, hour, day, month, year;
 
   // State is true because dont works again this function.
-  bool send_time_state = false;
+  bool send_time_state = true;
 
   // Input time from user.
   int input_time[14];
@@ -346,48 +212,24 @@ void Task_RTC_Code(void *pvParameters)
 
   // Step of time.
   int i = 0;
-
+  int i_time = 0;
+  sc = false;
   while (1)
   {
-    if (mode == 2)
+    if (mode == 1 && mode_state == true && sc == true && currentMode == 2)
     {
+      lcd.clear();
       // Step of time.
       i = 0;
-
-      // to config time funtion.
       send_time_state = false;
-
-      // Display time before config with 0s.
-      Serial.print("0");
-      Serial.print("0");
-      Serial.print(":");
-      Serial.print("0");
-      Serial.print("0");
-      Serial.print(":");
-      Serial.print("0");
-      Serial.print("0");
-
-      // Backspace to first value of time.
-      Serial.print('\b');
-      Serial.print('\b');
-      Serial.print('\b');
-      Serial.print('\b');
-      Serial.print('\b');
-      Serial.print('\b');
-      Serial.print('\b');
-      Serial.print('\b');
+      i_time = 1;
 
       // there are 14 digit to input.
-      while (i < 14)
+      while (i < 18)
       {
         // Increase the time value.
-        if (digitalRead(INCREMENT) == HIGH)
+        if (encoder.pulse_pos != lastStep)
         {
-          // Wait push back from button.
-          while (digitalRead(INCREMENT) == HIGH)
-            ;
-          delay(20);
-
           value++;
 
           if (value == 10)
@@ -408,94 +250,86 @@ void Task_RTC_Code(void *pvParameters)
             value = 0;
           }
           // Third digit of time max may be 5.
-          else if (i == 2 && value == 6)
+          else if (i == 3 && value == 6)
           {
             value = 0;
           }
           // Fifth digit of time max may be 5.
-          else if (i == 4 && value == 6)
+          else if (i == 6 && value == 6)
           {
             value = 0;
           }
 
           // Date config.
-          else if (i == 6 && value == 4)
+          else if (i == 8 && value == 4)
           {
             value = 0;
           }
-          else if (i == 7 && input_time[6] == 3)
+          else if (i == 9 && input_time[8] == 3)
           {
             value = 0;
           }
-          else if (i == 8 && value == 2)
+          else if (i == 11 && value == 2)
           {
             value = 0;
           }
-          else if (i == 9 && input_time[8] == 1 && value == 3)
+          else if (i == 12 && input_time[11] == 1 && value == 3)
           {
             value = 0;
           }
-
-          Serial.print(value);
-          Serial.print('\b');
+          if (i < 8)
+          {
+            lcd.setCursor(i, 0);
+            lcd.print(value);
+            lcd.print('\b');
+          }
+          if (i > 7)
+          {
+            lcd.setCursor(i - 8, 1);
+            lcd.print(value);
+            lcd.print('\b');
+          }
+          lastStep = encoder.pulse_pos;
         }
 
         delay(20);
 
-        if (digitalRead(BUTTON_STATE) == HIGH)
+        if (digitalRead(ENCODER_BTN) == HIGH)
         {
-          while (digitalRead(BUTTON_STATE) == HIGH)
+          while (digitalRead(ENCODER_BTN) == HIGH)
             ;
 
           input_time[i] = value;
-
-          Serial.print(value);
+          if (i < 8)
+          {
+            lcd.setCursor(i, 0);
+            lcd.print(value);
+          }
+          if (i > 7)
+          {
+            lcd.setCursor(i - 8, 1);
+            lcd.print(value);
+          }
 
           i++;
 
-          if (i == 2 || i == 4)
+          if (i == 2 || i == 5)
           {
-            Serial.print(":");
-          }
-          if (i == 6)
-          {
-            Serial.print("\n");
-
-            // Display time before config with 0s.
-            Serial.print("0");
-            Serial.print("0");
-            Serial.print("/");
-            Serial.print("0");
-            Serial.print("0");
-            Serial.print("/");
-            Serial.print("0");
-            Serial.print("0");
-            Serial.print("0");
-            Serial.print("0");
-
-            // Backspace to first value of time.
-            Serial.print('\b');
-            Serial.print('\b');
-            Serial.print('\b');
-            Serial.print('\b');
-            Serial.print('\b');
-            Serial.print('\b');
-            Serial.print('\b');
-            Serial.print('\b');
-            Serial.print('\b');
-            Serial.print('\b');
+            lcd.print(":");
+            i++;
           }
 
-          if (i == 8 || i == 10)
+          if (i == 10 || i == 13)
           {
-            Serial.print("/");
+            lcd.print("/");
+            i++;
           }
 
           // Its for year first two digit will be same "20**"
-          if (i == 10)
+          if (i == 14)
           {
-            Serial.print("20");
-            i = 12;
+            lcd.print("20");
+            i = 16;
           }
 
           value = 0;
@@ -504,53 +338,58 @@ void Task_RTC_Code(void *pvParameters)
         delay(20);
       }
 
-      Serial.println("\n-----------------");
+      lcd.println("\n-----------------");
 
       // State is true because dont works again this function
       send_time_state = true;
 
       // Assign values to variables.
       hour = (input_time[0] * 10) + input_time[1];
-      minute = (input_time[2] * 10) + input_time[3];
-      sec = (input_time[4] * 10) + input_time[5];
-      day = (input_time[6] * 10) + input_time[7];
-      month = (input_time[8] * 10) + input_time[9];
-      // year = (input_time[10] * 1000) + (input_time[11] * 100) + (input_time[12] * 10) + input_time[13];
-      year = (2 * 1000) + (0 * 100) + (input_time[12] * 10) + input_time[13];
+      minute = (input_time[3] * 10) + input_time[4];
+      sec = (input_time[6] * 10) + input_time[7];
+      day = (input_time[8] * 10) + input_time[9];
+      month = (input_time[11] * 10) + input_time[12];
+      year = (2 * 1000) + (0 * 100) + (input_time[14] * 10) + input_time[15];
 
       // Set time.
       // sec / min / hour / day / month / year
       rtc.setTime(sec, minute, hour, day, month, year);
 
-      // to mode 0.
-      mode = 0;
-
+      sc == false;
+      delay(20);
+      lcd.clear();
+    }
+    else if (currentMode == 0)
+    {
+      lcd.println("ok");
       // end of the config of time, activete mode selection again.
       mode_state = false;
-
-      delay(20);
+      sc == false;
+      Task_Menu();
     }
 
     delay(20);
 
-    // Display time when no configrating.
-    if (send_time_state == true && pre_mode == 2)
+    // Display time
+    if (send_time_state == true && mode == 1 && currentMode == 1)
     {
       // Print time.
-      Serial.println(rtc.getTime("%A, %B %d %Y %H:%M:%S"));
+      lcd.setCursor(0, 0);
+      lcd.print(rtc.getTime("%A,%B%d%Y"));
+      lcd.setCursor(5, 1);
+      lcd.print(rtc.getTime("%H:%M:%S"));
       struct tm timeinfo = rtc.getTimeStruct();
-
       delay(1000);
+      lcd.clear();
     }
     delay(20);
   }
+
   delay(20);
 }
-
-// Task for pomodoro function. (Mode 3)
+// Task for pomodoro funtion. (Mode 2)
 void Task_Pomodoro_Code(void *pvParameters)
 {
-  // task watchdog got triggered. the following tasks did not reset the watchdog in time ??
 
   // count back from that value.
   int count = 5;
@@ -567,33 +406,19 @@ void Task_Pomodoro_Code(void *pvParameters)
 
   while (1)
   {
-    if (mode == 3)
+    if (mode == 2 && mode_state == true && sc == true && currentMode == 2)
     {
+      lcd.clear();
       // To config funtion work.
       pom_state = false;
 
       count = 5;
 
-      Serial.print("0");
-      Serial.print("5");
-      Serial.print(":");
-      Serial.print("0");
-      Serial.print("0");
-
-      Serial.print("\b");
-      Serial.print("\b");
-      Serial.print("\b");
-      Serial.print("\b");
-      Serial.print("\b");
-
       while (pom_state == false)
       {
         // When INCREMENT button is on function works.
-        if (digitalRead(INCREMENT) == HIGH)
+        if (encoder.pulse_pos != lastStep)
         {
-          // Waits that until hand off the INCREMENT button.
-          while (digitalRead(INCREMENT) == HIGH)
-            ;
           // every push to increment that increase count.
           count += 5;
 
@@ -606,26 +431,24 @@ void Task_Pomodoro_Code(void *pvParameters)
           // To get time for each digit.
           sec_dig = count / 10;
           one_dig = count % 10;
-
-          Serial.print(sec_dig);
-          Serial.print(one_dig);
-          Serial.print("\b");
-          Serial.print("\b");
+          lcd.setCursor(0, 0);
+          lcd.print(sec_dig);
+          lcd.print(one_dig);
 
           delay(100);
+          lastStep = encoder.pulse_pos;
         }
-        // When BUTTON_STATE button is on function works.
-        if (digitalRead(BUTTON_STATE) == HIGH)
+        // When ENCODER_BTN button is on function works.
+        if (digitalRead(ENCODER_BTN) == HIGH)
         {
-          // Waits that until hand off the BUTTON_STATE button.
-          while (digitalRead(BUTTON_STATE) == HIGH)
+          // Waits that until hand off the ENCODER_BTN button.
+          while (digitalRead(ENCODER_BTN) == HIGH)
             ;
           // Assign count to minute variable.
           minute = count;
 
-          Serial.print(sec_dig);
-          Serial.print(one_dig);
-          Serial.println("\n-----------------");
+          lcd.print(sec_dig);
+          lcd.print(one_dig);
 
           pom_state = true;
           delay(20);
@@ -636,18 +459,13 @@ void Task_Pomodoro_Code(void *pvParameters)
       minute = minute - 1;
       second = 59;
 
-      // to mode 0.
-      mode = 0;
-
-      // end of the config of time, activete mode selection again.
-      mode_state = false;
-
       delay(20);
     }
 
     // if second is decrease that works.
-    if (second != last_second)
+    if (second != last_second && (currentMode == 1 || currentMode == 2) && mode == 2)
     {
+      lcd.setCursor(0, 0);
       // if second goes to -1 that equals 59 second.
       if (second == -1)
       {
@@ -658,22 +476,30 @@ void Task_Pomodoro_Code(void *pvParameters)
 
       delay(20);
 
-      if (pom_state == true && pre_mode == 3)
+      if (pom_state == true)
       {
         // It is because look better to with 0s.
         if (minute < 10)
         {
-          Serial.print("0");
+          lcd.print("0");
         }
-        Serial.print(minute);
-        Serial.print(":");
+        lcd.print(minute);
+        lcd.print(":");
 
         if (second < 10)
         {
-          Serial.print("0");
+          lcd.print("0");
         }
-        Serial.println(second);
+        lcd.println(second);
         delay(10);
+      }
+      if (currentMode == 0)
+      {
+        Serial.println("ok");
+        // end of the config of time, activete mode selection again.
+        mode_state = false;
+
+        sc == false;
       }
     }
     delay(20);
@@ -681,110 +507,7 @@ void Task_Pomodoro_Code(void *pvParameters)
   delay(20);
 }
 
-// Task for send_text function. (Mode 4) // Using keyboard input.
-void Task_Text_Code2(void *pvParameters) // It will be developed.
-{
-  char input_message[50];
-  bool state = false;
-  char incoming;
-
-  bool display_state = false;
-
-  while (1)
-  {
-    if (mode == 4)
-    {
-      state = false;
-
-      // Input from user and works one time.
-      while (Serial.available() > 0 && state == false)
-      {
-
-        /* *********************** */
-        // Read character.
-        for (int i = 0;;) // Read 50 character -> ; i<50 ;.
-        {
-          // Assign input to variable
-          incoming = Serial.read();
-
-          // Assign only small letters and numbers to array.
-          if (((incoming >= 97 && incoming <= 122) || (incoming >= 48 && incoming <= 58) || incoming == ' ') && (incoming != '\0'))
-          {
-            // Assign variable to array.
-            input_message[i] = incoming;
-
-            if (i <= 49)
-            {
-              // Print array.
-              Serial.print(input_message[i]);
-              i++;
-            }
-
-            delay(10);
-          }
-
-          // When input backspace
-          else if (incoming == '\b')
-          {
-            i--;
-
-            if (i < 0)
-            {
-              i = 0;
-            }
-
-            // Assign backspace to array.
-            input_message[i] = incoming;
-
-            // Print backspace.
-            Serial.print(input_message[i]);
-
-            delay(10);
-          }
-        }
-        delay(10);
-
-        state = true;
-
-        // to mode 0.
-        mode = 0;
-
-        // end of the config of time, activete mode selection again.
-        mode_state = false;
-
-        delay(10);
-      }
-      delay(20);
-    }
-
-    if (display_state == false)
-    {
-      if (state == true && pre_mode == 4)
-      {
-        for (int i = 0; i < 20; i++)
-        {
-          if (input_message[i] == '\0')
-          {
-            break;
-          }
-          Serial.print(input_message[i]);
-          delay(10);
-        }
-
-        display_state = true;
-      }
-    }
-
-    if (pre_mode != 4)
-    {
-      display_state = false;
-    }
-
-    delay(20);
-  }
-}
-
-// Task for send_text function. (Mode 4) // Using button for letters.
+// Task for send_text funtion. (Mode 3)
 void Task_Text_Code(void *pvParameters)
 {
   // Input from user.
@@ -804,9 +527,10 @@ void Task_Text_Code(void *pvParameters)
 
   while (1)
   {
-    if (mode == 4)
+    if (mode == 3 && mode_state == true && sc == true && currentMode == 2)
     {
-      // Letter digit.
+      lcd.clear();
+      //  Letter digit.
       digit = 0;
 
       // Clear all array.
@@ -817,40 +541,40 @@ void Task_Text_Code(void *pvParameters)
       }
 
       // Function starts with A letter.
-      Serial.print('A');
+      lcd.print('A');
 
       while (1)
       {
-        // Every push change the letter.
-        if (digitalRead(INCREMENT) == HIGH)
+        //  Every push change the letter.
+        if (encoder.pulse_pos != lastStep)
         {
-          while (digitalRead(INCREMENT) == HIGH)
-            ;
 
           value++;
-
           if (value == 91)
           {
             value = 64;
           }
 
-          // Backspace
           Serial.print('\b');
 
           // Convert int to char.
           sprintf(buffer, "%c", value);
 
-          Serial.print(buffer);
+          lcd.print(buffer);
 
+          lastStep = encoder.pulse_pos;
           delay(10);
         }
 
-        if (digitalRead(BUTTON_STATE) == HIGH)
+        if (digitalRead(ENCODER_BTN) == HIGH)
         {
-          while (digitalRead(BUTTON_STATE) == HIGH)
+          while (digitalRead(ENCODER_BTN) == HIGH)
             ;
+          int i = 0;
+          lcd.setCursor(i, 0);
           if (digit <= 19)
           {
+
             // Print array.
             input_message[digit] = value;
 
@@ -861,12 +585,13 @@ void Task_Text_Code(void *pvParameters)
               break;
             }
 
-            // It is new digit starts.
-            Serial.print('A');
+            lcd.print('A');
             digit++;
 
             value = 65;
+            i++;
           }
+
           delay(10);
         }
       }
@@ -874,28 +599,29 @@ void Task_Text_Code(void *pvParameters)
 
       Serial.print("\n");
 
-      // to mode 0.
-      mode = 0;
-
-      // end of the config of time, activete mode selection again.
-      mode_state = false;
-
+      if (currentMode == 0)
+      {
+        Serial.println("ok");
+        mode_state = false;
+        sc == false;
+      }
       state = true;
 
       delay(10);
     }
     delay(20);
 
-    if (pre_mode == 4 && state == true)
+    if (state == true && currentMode == 1 && mode == 3)
     {
       for (int i = 0; i < 20; i++)
       {
-        // HOWWWW????
         if (input_message[i] == 64)
         {
           break;
         }
-        Serial.print(input_message[i]);
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print(input_message[i]);
         delay(10);
       }
       Serial.print("\n");
@@ -903,74 +629,36 @@ void Task_Text_Code(void *pvParameters)
       state = false;
       delay(20);
     }
-
-    if (pre_mode != 4)
-    {
-      state = true;
-    }
     delay(20);
   }
 }
 
+//---------------------------SETUP--------------------------------------------//
 void setup()
 {
-  // Serial comm begin.
   Serial.begin(115200);
+  encoder.clk_pin = ENCODER_CLK;
+  encoder.dt_pin = ENCODER_DT;
+  pinMode(encoder.clk_pin, INPUT);
+  pinMode(encoder.dt_pin, INPUT);
+  button_add_default(&button, ENCODER_BTN);
+  button_init(&button_isr);
 
-  pinMode(INCREMENT, INPUT);
-  pinMode(BUTTON_STATE, INPUT);
-
-  //  minute = 0;
-
-  /* begin of timer settings for clock and pomodoro function. */
-
-  // First variable: number of the timer.(from 0 to 3)
-  // Second variable: prescaler.
-  // Third variable: count up.(true)
-  My_timer = timerBegin(1, 80, true);
-  My_timer2 = timerBegin(0, 80, true);
+  attachInterrupt(digitalPinToInterrupt(encoder.clk_pin), ISR, CHANGE);
+  lcd.begin(16, 2);
+  My_timer2 = timerBegin(1, 80, true);
 
   // Attach it to an ISR
-  timerAttachInterrupt(My_timer, &onTimer, true);
   timerAttachInterrupt(My_timer2, &onTimer2, true);
 
   // 1000000us is 1 second
   // third variable: interrupt generated periodically.
-  timerAlarmWrite(My_timer, 1000000, true);
   timerAlarmWrite(My_timer2, 1000000, true);
 
   // enable timer.
-  timerAlarmEnable(My_timer);
   timerAlarmEnable(My_timer2);
 
-  /* End of timer settings for clock and pomodoro function. */
-
-  // Task for menu function.
-  // create a task that will be executed in the Task_Menucode() function, with priority 1 and executed on core 0
-  xTaskCreatePinnedToCore(
-      Task_Menu_Code, /* Task function. */
-      "Task_Menu",    /* name of task. */
-      10000,          /* Stack size of task */
-      NULL,           /* parameter of the task */
-      1,              /* priority of the task */
-      &Task_Menu,     /* Task handle to keep track of created task */
-      0);             /* pin task to core 0 */
-  delay(500);
-
-  // Task for clock function.
-  // create a task that will be executed in the Task_Menucode() function, with priority 1 and executed on core 0
-  xTaskCreatePinnedToCore(
-      Task_Clock_Code, /* Task function. */
-      "Task_Clock",    /* name of task. */
-      10000,           /* Stack size of task */
-      NULL,            /* parameter of the task */
-      1,               /* priority of the task */
-      &Task_Clock,     /* Task handle to keep track of created task */
-      1);              /* pin task to core 1 */
-  delay(500);
-
   // Task for rtc_clock function.
-  // create a task that will be executed in the Task_Menucode() function, with priority 1 and executed on core 0
   xTaskCreatePinnedToCore(
       Task_RTC_Code, /* Task function. */
       "Task_RTC",    /* name of task. */
@@ -982,7 +670,6 @@ void setup()
   delay(500);
 
   // Task for pomodoro function.
-  // create a task that will be executed in the Task_Menucode() function, with priority 1 and executed on core 0
   xTaskCreatePinnedToCore(
       Task_Pomodoro_Code, /* Task function. */
       "Task_Pomodoro",    /* name of task. */
@@ -994,7 +681,6 @@ void setup()
   delay(500);
 
   // Task for send_text function.
-  // create a task that will be executed in the Task_Menucode() function, with priority 1 and executed on core 0
   xTaskCreatePinnedToCore(
       Task_Text_Code, /* Task function. */
       "Task_Text",    /* name of task. */
@@ -1006,7 +692,43 @@ void setup()
   delay(500);
 }
 
+void clicked()
+{
+  if (button.mode == CLICKED)
+  {
+    // Serial.println("Clicked 1!");
+    click = true;
+    button.mode = NONE;
+  }
+}
+void double_clicked()
+{
+  if (button.mode == DOUBLE_CLICKED)
+  {
+    Serial.println("Double Clicked !");
+    sc = true;
+    click = false;
+    currentMode++;
+
+    button.mode = NONE;
+  }
+}
+void long_pressed()
+{
+  if (button.mode == LONG_PRESSED)
+  {
+    Serial.println("Long Pressed 1!");
+    sc = false;
+    click = false;
+    currentMode--;
+    button.mode = NONE;
+  }
+}
+
 void loop()
 {
-  delay(20);
+  while (1)
+  {
+    delay(20);
+  }
 }
