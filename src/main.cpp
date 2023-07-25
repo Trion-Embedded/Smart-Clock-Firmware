@@ -465,6 +465,7 @@ void Task_Pomodoro_Code(void *pvParameters)
     // if second is decrease that works.
     if (second != last_second && (currentMode == 1 || currentMode == 2) && mode == 2)
     {
+      lcd.clear();
       lcd.setCursor(0, 0);
       // if second goes to -1 that equals 59 second.
       if (second == -1)
@@ -532,6 +533,7 @@ void Task_Text_Code(void *pvParameters)
       lcd.clear();
       //  Letter digit.
       digit = 0;
+      int pos = 0;
 
       // Clear all array.
       for (int i = 0; i < 20; i++)
@@ -541,6 +543,7 @@ void Task_Text_Code(void *pvParameters)
       }
 
       // Function starts with A letter.
+      lcd.setCursor(0,0);
       lcd.print('A');
 
       while (1)
@@ -559,7 +562,7 @@ void Task_Text_Code(void *pvParameters)
 
           // Convert int to char.
           sprintf(buffer, "%c", value);
-
+          lcd.setCursor(pos,0);
           lcd.print(buffer);
 
           lastStep = encoder.pulse_pos;
@@ -570,8 +573,8 @@ void Task_Text_Code(void *pvParameters)
         {
           while (digitalRead(ENCODER_BTN) == HIGH)
             ;
-          int i = 0;
-          lcd.setCursor(i, 0);
+          //int i = 0;
+          //lcd.setCursor(i, 0);
           if (digit <= 19)
           {
 
@@ -589,7 +592,7 @@ void Task_Text_Code(void *pvParameters)
             digit++;
 
             value = 65;
-            i++;
+            pos++;
           }
 
           delay(10);
@@ -696,7 +699,7 @@ void clicked()
 {
   if (button.mode == CLICKED)
   {
-    // Serial.println("Clicked 1!");
+    Serial.println("Clicked !");
     click = true;
     button.mode = NONE;
   }
@@ -717,7 +720,7 @@ void long_pressed()
 {
   if (button.mode == LONG_PRESSED)
   {
-    Serial.println("Long Pressed 1!");
+    Serial.println("Long Pressed !");
     sc = false;
     click = false;
     currentMode--;
