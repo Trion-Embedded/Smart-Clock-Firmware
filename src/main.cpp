@@ -16,6 +16,19 @@
 #define ENCODER_COUNTER_MAX_LIM (MAX_MODE * ENCODER_CHANGE_CONST)
 #define ENCODER_COUNTER_MIN_LIM (MIN_MODE * ENCODER_CHANGE_CONST)
 
+enum mode
+{
+  time_date = 1,
+  pomodoro = 2,
+  tasks = 3
+};
+
+enum under_mode
+{
+  quit = 0,
+  show = 1,
+  edit = 2
+};
 // LCD PINOuts
 LiquidCrystal lcd(12, 16, 15, 19, 5, 4);
 
@@ -54,11 +67,9 @@ int lastMode = 0;
 
 // State of mode.
 bool mode_state = false;
-bool presscheck = false;
-bool dblpresscheck = false;
 bool sc = false;
 bool click = false;
-bool dblsc = false;
+bool stop = false;
 
 //  Value of minute.
 int minute = 0;
@@ -109,7 +120,10 @@ void encoder_update(encoder_t *e)
 void IRAM_ATTR onTimer2()
 {
   // Increase second variable every second.
-  second--;
+  if (stop == false)
+  {
+    second--;
+  }
 }
 
 void IRAM_ATTR ISR()
@@ -129,22 +143,6 @@ TaskHandle_t Task_Pomodoro;
 // Task for send_text function. (Mode 3)
 TaskHandle_t Task_Text;
 
-// mode selection function
-void modeSel()
-{
-  char str[30];
-
-  // lcd.setCursor(0, 0);
-  // lcd.print("                ");
-
-  lcd.setCursor(0, 0);
-  lcd.print(encoder.pulse_pos);
-
-  sprintf(str, "Mode %d     ", encoder.mode);
-  lcd.setCursor(6, 1);
-  lcd.print(str);
-}
-
 // Task for menu funtion.
 void Task_Menu()
 {
@@ -158,7 +156,7 @@ void Task_Menu()
     lcd.print(pre_mode);
     if (encoder.mode != lastMode)
     {
-      pre_mode++;
+      pre_mode = encoder.mode;
 
       // when pre_mode pass 3, turn to 1. Because there are 3 modes.
       if (pre_mode == 4)
@@ -216,7 +214,7 @@ void Task_RTC_Code(void *pvParameters)
   sc = false;
   while (1)
   {
-    if (mode == 1 && mode_state == true && sc == true && currentMode == 2)
+    if (mode == time_date && mode_state == true && sc == true && currentMode == edit)
     {
       lcd.clear();
       // Step of time.
@@ -281,13 +279,11 @@ void Task_RTC_Code(void *pvParameters)
           {
             lcd.setCursor(i, 0);
             lcd.print(value);
-            lcd.print('\b');
           }
           if (i > 7)
           {
             lcd.setCursor(i - 8, 1);
             lcd.print(value);
-            lcd.print('\b');
           }
           lastStep = encoder.pulse_pos;
         }
@@ -338,8 +334,6 @@ void Task_RTC_Code(void *pvParameters)
         delay(20);
       }
 
-      lcd.println("\n-----------------");
-
       // State is true because dont works again this function
       send_time_state = true;
 
@@ -359,19 +353,19 @@ void Task_RTC_Code(void *pvParameters)
       delay(20);
       lcd.clear();
     }
-    else if (currentMode == 0)
+    else if (currentMode == quit)
     {
-      lcd.println("ok");
+      lcd.print("ok");
       // end of the config of time, activete mode selection again.
       mode_state = false;
-      sc == false;
+      sc = false;
       Task_Menu();
     }
 
     delay(20);
 
     // Display time
-    if (send_time_state == true && mode == 1 && currentMode == 1)
+    if (send_time_state == true && mode == time_date && currentMode == show)
     {
       // Print time.
       lcd.setCursor(0, 0);
@@ -387,6 +381,7 @@ void Task_RTC_Code(void *pvParameters)
 
   delay(20);
 }
+
 // Task for pomodoro funtion. (Mode 2)
 void Task_Pomodoro_Code(void *pvParameters)
 {
@@ -406,7 +401,7 @@ void Task_Pomodoro_Code(void *pvParameters)
 
   while (1)
   {
-    if (mode == 2 && mode_state == true && sc == true && currentMode == 2)
+    if (mode == pomodoro && mode_state == true && sc == true && currentMode == edit)
     {
       lcd.clear();
       // To config funtion work.
@@ -463,11 +458,12 @@ void Task_Pomodoro_Code(void *pvParameters)
     }
 
     // if second is decrease that works.
-    if (second != last_second && (currentMode == 1 || currentMode == 2) && mode == 2)
+    if (second != last_second && (currentMode == show || currentMode == edit) && mode == pomodoro)
     {
       lcd.clear();
       lcd.setCursor(0, 0);
       // if second goes to -1 that equals 59 second.
+
       if (second == -1)
       {
         minute--;
@@ -479,6 +475,7 @@ void Task_Pomodoro_Code(void *pvParameters)
 
       if (pom_state == true)
       {
+
         // It is because look better to with 0s.
         if (minute < 10)
         {
@@ -491,16 +488,16 @@ void Task_Pomodoro_Code(void *pvParameters)
         {
           lcd.print("0");
         }
-        lcd.println(second);
+        lcd.print(second);
         delay(10);
       }
-      if (currentMode == 0)
+
+      if (currentMode == quit)
       {
-        Serial.println("ok");
-        // end of the config of time, activete mode selection again.
+        //  end of the config of time, activete mode selection again.
         mode_state = false;
 
-        sc == false;
+        sc = false;
       }
     }
     delay(20);
@@ -516,6 +513,7 @@ void Task_Text_Code(void *pvParameters)
 
   // Variable to print text.
   bool state = false;
+  bool one_time_print = false;
 
   // Digit of array.
   int digit = 0;
@@ -528,13 +526,12 @@ void Task_Text_Code(void *pvParameters)
 
   while (1)
   {
-    if (mode == 3 && mode_state == true && sc == true && currentMode == 2)
+    if (mode == tasks && mode_state == true && sc == true && currentMode == edit)
     {
       lcd.clear();
       //  Letter digit.
       digit = 0;
       int pos = 0;
-
       // Clear all array.
       for (int i = 0; i < 20; i++)
       {
@@ -543,11 +540,12 @@ void Task_Text_Code(void *pvParameters)
       }
 
       // Function starts with A letter.
-      lcd.setCursor(0,0);
+      lcd.setCursor(0, 0);
       lcd.print('A');
 
       while (1)
       {
+
         //  Every push change the letter.
         if (encoder.pulse_pos != lastStep)
         {
@@ -562,7 +560,7 @@ void Task_Text_Code(void *pvParameters)
 
           // Convert int to char.
           sprintf(buffer, "%c", value);
-          lcd.setCursor(pos,0);
+          lcd.setCursor(pos, 0);
           lcd.print(buffer);
 
           lastStep = encoder.pulse_pos;
@@ -573,11 +571,8 @@ void Task_Text_Code(void *pvParameters)
         {
           while (digitalRead(ENCODER_BTN) == HIGH)
             ;
-          //int i = 0;
-          //lcd.setCursor(i, 0);
           if (digit <= 19)
           {
-
             // Print array.
             input_message[digit] = value;
 
@@ -585,52 +580,49 @@ void Task_Text_Code(void *pvParameters)
             {
               // To next time read null.
               input_message[digit] == 'A';
+              lcd.print('A');
+              currentMode = 1;
               break;
             }
 
-            lcd.print('A');
             digit++;
 
             value = 65;
             pos++;
           }
-
           delay(10);
         }
       }
       delay(10);
-
-      Serial.print("\n");
-
-      if (currentMode == 0)
-      {
-        Serial.println("ok");
-        mode_state = false;
-        sc == false;
-      }
       state = true;
+      Serial.print("\n");
+      if (currentMode == quit)
+      {
+        lcd.clear();
+        mode_state = false;
+        sc = false;
+      }
 
       delay(10);
     }
     delay(20);
 
-    if (state == true && currentMode == 1 && mode == 3)
+    if ((state == true || one_time_print == true) && currentMode == show && mode == tasks)
     {
+      lcd.clear();
       for (int i = 0; i < 20; i++)
       {
         if (input_message[i] == 64)
         {
           break;
         }
-        lcd.clear();
-        lcd.setCursor(0, 0);
+        lcd.setCursor(i, 0);
         lcd.print(input_message[i]);
-        delay(10);
+        Serial.print(input_message[i]);
       }
       Serial.print("\n");
-
       state = false;
-      delay(20);
+      one_time_print = true;
     }
     delay(20);
   }
@@ -700,8 +692,14 @@ void clicked()
   if (button.mode == CLICKED)
   {
     Serial.println("Clicked !");
+    Serial.println(currentMode);
+    Serial.println(mode);
     click = true;
     button.mode = NONE;
+    if (currentMode == show && mode == pomodoro)
+    {
+      stop = !stop;
+    }
   }
 }
 void double_clicked()
