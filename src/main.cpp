@@ -27,7 +27,8 @@ enum under_mode
 {
   quit = 0,
   show = 1,
-  edit = 2
+  edit = 2,
+  edit_next = 3
 };
 // LCD PINOuts
 LiquidCrystal lcd(12, 16, 15, 19, 5, 4);
@@ -510,7 +511,7 @@ void Task_Text_Code(void *pvParameters)
 {
   // Input from user.
   char input_message[20];
-
+  char input_message2[20];
   // Variable to print text.
   bool state = false;
   bool one_time_print = false;
@@ -523,6 +524,7 @@ void Task_Text_Code(void *pvParameters)
 
   // int to char.
   char buffer[1];
+  char buffer2[1];
 
   while (1)
   {
@@ -538,7 +540,11 @@ void Task_Text_Code(void *pvParameters)
         input_message[i] = '\0';
         delay(1);
       }
-
+      for (int i = 0; i < 20; i++)
+      {
+        input_message2[i] = '\0';
+        delay(1);
+      }
       // Function starts with A letter.
       lcd.setCursor(0, 0);
       lcd.print('A');
@@ -581,7 +587,7 @@ void Task_Text_Code(void *pvParameters)
               // To next time read null.
               input_message[digit] == 'A';
               lcd.print('A');
-              currentMode = 1;
+              currentMode = edit_next;
               break;
             }
 
@@ -602,7 +608,59 @@ void Task_Text_Code(void *pvParameters)
         mode_state = false;
         sc = false;
       }
+      if (currentMode == edit_next && mode == tasks && mode_state == true)
+      {
+        lcd.clear();
+        lcd.print("next :");
+        digit = 0;
+        int pos = 0;
+        while (1)
+        {
+          //  Every push change the letter.
+          if (encoder.pulse_pos != lastStep)
+          {
+            value++;
+            if (value == 91)
+            {
+              value = 64;
+            }
 
+            Serial.print('\b');
+
+            // Convert int to char.
+            sprintf(buffer2, "%c", value);
+            lcd.setCursor(pos + 6, 0);
+            lcd.print(buffer2);
+
+            lastStep = encoder.pulse_pos;
+            delay(10);
+          }
+
+          if (digitalRead(ENCODER_BTN) == HIGH)
+          {
+            while (digitalRead(ENCODER_BTN) == HIGH)
+              ;
+            if (digit <= 19)
+            {
+              // Print array.
+              input_message2[digit] = value;
+
+              if (input_message2[digit] == 64)
+              {
+                // To next time read null.
+                input_message2[digit] == 'A';
+                lcd.print('A');
+                currentMode = 1;
+                break;
+              }
+              digit++;
+              value = 65;
+              pos++;
+            }
+            delay(10);
+          }
+        }
+      }
       delay(10);
     }
     delay(20);
@@ -619,6 +677,20 @@ void Task_Text_Code(void *pvParameters)
         lcd.setCursor(i, 0);
         lcd.print(input_message[i]);
         Serial.print(input_message[i]);
+      }
+      if (stop == true)
+      {
+        lcd.clear();
+        for (int i = 0; i < 20; i++)
+        {
+          if (input_message2[i] == 64)
+          {
+            break;
+          }
+          lcd.setCursor(i, 0);
+          lcd.print(input_message2[i]);
+          Serial.print(input_message2[i]);
+        }
       }
       Serial.print("\n");
       state = false;
@@ -696,7 +768,7 @@ void clicked()
     Serial.println(mode);
     click = true;
     button.mode = NONE;
-    if (currentMode == show && mode == pomodoro)
+    if (currentMode == show && (mode == pomodoro || mode == tasks))
     {
       stop = !stop;
     }
@@ -730,6 +802,7 @@ void loop()
 {
   while (1)
   {
+
     delay(20);
   }
 }
